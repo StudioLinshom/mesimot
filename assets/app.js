@@ -1,6 +1,6 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 import Sortable from 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/modular/sortable.esm.js';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, ENABLE_GOOGLE_LOGIN } from '../config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, ENABLE_GOOGLE_LOGIN } from '../config.js?v=2';
 
 /* =========================================================
    Constants
