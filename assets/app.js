@@ -1,6 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 import Sortable from 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/modular/sortable.esm.js';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, ENABLE_GOOGLE_LOGIN } from '../config.js?v=2';
+import { createTable } from './table.js?v=3';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, ENABLE_GOOGLE_LOGIN } from '../config.js?v=3';
 
 /* =========================================================
    Constants
@@ -42,7 +43,13 @@ const S = {
   myShowDone: false,
   openDone: {},           // column key -> bool
   openTaskId: null,
+  fields: [],             // custom columns of the open project
+  fieldsReady: true,      // false until migration 002 is run
+  filterOpen: false,
+  search: '',
 };
+const viewKey = () => S.route.view === 'project' ? 'p.' + S.route.id : 'my';
+const getViewMode = () => load('view.' + viewKey(), S.route.view === 'project' ? 'board' : 'list');
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
@@ -184,6 +191,10 @@ async function loadProjectData(id) {
   ]);
   if (e1 || e2) return fail(e1 || e2);
   S.buckets = buckets; S.tasks = tasks;
+  for (const t of S.tasks) t.custom ||= {};
+  const { data: fields, error: e3 } = await sb.from('project_fields').select('*').eq('project_id', id).order('position');
+  S.fieldsReady = !e3;
+  S.fields = fields || [];
 }
 
 async function loadMyTasks() {
@@ -211,12 +222,20 @@ async function route() {
 
 function render() {
   const navOpen = $('.layout')?.classList.contains('nav-open');
+  const scrollers = ['.table-wrap', '.board', '.list-view'].map(sel => { const el = $(sel); return el && [sel, el.scrollTop, el.scrollLeft]; }).filter(Boolean);
   app.innerHTML = `<div class="layout">
     ${renderSidebar()}
     <main class="main">${S.route.view === 'project' ? renderProjectView() : renderMyView()}</main>
   </div>`;
   if (navOpen && window.innerWidth <= 820) $('.layout').classList.add('nav-open');
-  if (S.route.view === 'project') wireBoard();
+  if (S.route.view === 'project' && getViewMode() === 'board') wireBoard();
+  for (const [sel, top, left] of scrollers) { const el = $(sel); if (el) { el.scrollTop = top; el.scrollLeft = left; } }
+}
+
+function viewToggle(options) {
+  const mode = getViewMode();
+  return `<div class="seg" role="tablist">${options.map(o =>
+    `<button class="${mode === o.key ? 'on' : ''}" data-act="view-mode" data-mode="${o.key}">${o.label}</button>`).join('')}</div>`;
 }
 
 function renderSidebar() {
@@ -253,6 +272,13 @@ function renderMyView() {
     { key: 'nodate', label: 'ללא תאריך', items: open.filter(t => !t.due_date) },
   ];
   if (S.myShowDone) groups.push({ key: 'done', label: 'הושלמו', items: S.tasks.filter(t => t.status === 'done').sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || '')).slice(0, 30) });
+  const toggle = viewToggle([{ key: 'list', label: 'לפי מועד' }, { key: 'table', label: 'טבלה' }]);
+  if (getViewMode() === 'table') {
+    return `<div class="topbar">
+        <button class="icon-btn menu-btn" data-act="nav">☰</button>
+        <h2>המשימות שלי</h2>${toggle}<div class="spacer"></div>
+      </div>${renderTable()}`;
+  }
   const body = open.length || S.myShowDone
     ? groups.filter(g => g.items.length).map(g => `<section class="group ${g.key}">
         <h3>${g.label} <span class="n">${g.items.length}</span></h3>
@@ -260,7 +286,7 @@ function renderMyView() {
     : `<div class="empty"><div class="big">🎉</div>אין משימות פתוחות שמשויכות אליך</div>`;
   return `<div class="topbar">
       <button class="icon-btn menu-btn" data-act="nav">☰</button>
-      <h2>המשימות שלי</h2><div class="spacer"></div>
+      <h2>המשימות שלי</h2>${toggle}<div class="spacer"></div>
       <label class="check-inline"><input type="checkbox" data-act="my-done" ${S.myShowDone ? 'checked' : ''}> הצג שהושלמו</label>
     </div>
     <div class="list-view"><div class="list-wrap">${body}</div></div>`;
@@ -301,16 +327,20 @@ function renderProjectView() {
   const p = projectById(S.route.id);
   const members = S.members[p.id] || [];
   const cols = columnsFor(p);
-  return `<div class="topbar">
+  const mode = getViewMode();
+  const head = `<div class="topbar">
       <button class="icon-btn menu-btn" data-act="nav">☰</button>
       <h2><span class="dot" style="background:${esc(p.color)}"></span><span>${esc(p.name)}</span></h2>
       <button class="icon-btn" data-act="project-settings" title="הגדרות פרויקט">⋯</button>
+      ${viewToggle([{ key: 'board', label: 'לוח' }, { key: 'table', label: 'טבלה' }])}
       <div class="spacer"></div>
       <div class="toolbar">
         <button class="btn ghost sm" data-act="members" title="חברים בפרויקט">
           <span class="avatars">${members.slice(0, 4).map(m => avatar(m.profile, 'sm')).join('')}</span>
           ${isOwner(p.id) ? 'שיתוף' : ''}
-        </button>
+        </button>`;
+  if (mode === 'table') return head + `</div></div>` + renderTable();
+  return head + `
         <select class="input" data-act="group-by" aria-label="קיבוץ לפי">
           ${GROUPS.map(g => `<option value="${g.key}" ${S.groupBy === g.key ? 'selected' : ''}>קיבוץ: ${g.label}</option>`).join('')}
         </select>
@@ -462,9 +492,17 @@ async function addTask(col, title) {
 }
 
 /* =========================================================
+   Table view
+   ========================================================= */
+const T = createTable({ S, sb, esc, load, save, fail, toast, render, avatar, displayName, profileOf, projectById,
+  STATUSES, PRIORITIES, COLORS, openModal, closeModal, updateTask, viewKey, todayStr });
+const renderTable = () => T.renderTable();
+
+/* =========================================================
    Events
    ========================================================= */
 app.addEventListener('click', async e => {
+  if (T.onClick(e)) return;
   const act = e.target.closest('[data-act]')?.dataset.act;
   const card = e.target.closest('[data-task]');
   if (act === 'nav') return $('.layout').classList.toggle('nav-open');
@@ -473,6 +511,7 @@ app.addEventListener('click', async e => {
   }
   if (e.target.closest('.sidebar a.nav-item')) $('.layout').classList.remove('nav-open');
   switch (act) {
+    case 'view-mode': save('view.' + viewKey(), e.target.closest('[data-act]').dataset.mode); S.filterOpen = false; return render();
     case 'new-project': return openProjectModal();
     case 'project-settings': return openProjectModal(projectById(S.route.id));
     case 'members': return openMembersModal(S.route.id);
@@ -495,18 +534,22 @@ app.addEventListener('click', async e => {
     case 'rename-bucket': return startRenameBucket(e.target.closest('.title'));
     case 'bucket-menu': return deleteBucket(e.target.closest('.col').dataset.bucket);
   }
-  if (card && !e.target.closest('button, input')) openTaskModal(card.dataset.task);
+  if (card && !e.target.closest('button, input, select, textarea, a, .no-open')) openTaskModal(card.dataset.task);
 });
 
 app.addEventListener('change', e => {
+  if (T.onChange(e)) return;
   const act = e.target.dataset.act;
   if (act === 'group-by') { S.groupBy = e.target.value; save('groupBy', S.groupBy); render(); }
   if (act === 'show-done') { S.showDone = e.target.checked; save('showDone', S.showDone); render(); }
   if (act === 'my-done') { S.myShowDone = e.target.checked; render(); }
 });
 
+app.addEventListener('input', e => T.onInput(e));
+
 app.addEventListener('submit', async e => {
   e.preventDefault();
+  if (await T.onSubmit(e)) return;
   const f = e.target;
   if (f.dataset.form === 'add-task') {
     const title = f.title.value.trim(); if (!title) return;
@@ -526,6 +569,7 @@ app.addEventListener('submit', async e => {
 });
 
 app.addEventListener('keydown', e => {
+  if (T.onKeydown(e)) return;
   if (e.key === 'Escape' && e.target.closest('form[data-form="add-task"]')) {
     const wrap = e.target.closest('.add-task');
     wrap.querySelector('form').classList.add('hidden'); wrap.querySelector('.open').classList.remove('hidden');
@@ -825,12 +869,13 @@ const refresh = debounce(async (table) => {
     if (S.route.view === 'project' && !projectById(S.route.id)) { location.hash = '#/my'; return; }
   }
   if (S.route.view === 'project') await loadProjectData(S.route.id); else await loadMyTasks();
-  if (!modalRoot.innerHTML && !document.querySelector('[contenteditable="true"], .add-task form:not(.hidden)')) render();
+  const busy = document.activeElement?.closest?.('.tbl, .table-toolbar, .filter-panel');
+  if (!modalRoot.innerHTML && !busy && !document.querySelector('[contenteditable="true"], .add-task form:not(.hidden)')) render();
 }, 400);
 
 function subscribeRealtime() {
   const ch = sb.channel('mesimot');
-  for (const table of ['tasks', 'buckets', 'checklist_items', 'project_members', 'projects']) {
+  for (const table of ['tasks', 'buckets', 'checklist_items', 'project_members', 'projects', 'project_fields']) {
     ch.on('postgres_changes', { event: '*', schema: 'public', table }, () => refresh(table));
   }
   ch.subscribe();
