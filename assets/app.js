@@ -624,6 +624,28 @@ function closeModal() {
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && modalRoot.innerHTML) closeModal(); });
 
 /* ----- task ----- */
+async function moveTask(t, targetId, selectEl) {
+  const target = projectById(targetId);
+  if (!target || targetId === t.project_id) return;
+  const hasCustom = t.custom && Object.keys(t.custom).length > 0;
+  if (hasCustom && !confirm(`ערכי העמודות המותאמות של המשימה לא יעברו ל"${target.name}". להמשיך?`)) {
+    selectEl.value = t.project_id; return;
+  }
+  const { data: tb, error: e1 } = await sb.from('buckets').select('id').eq('project_id', targetId).order('position').limit(1);
+  if (e1) return fail(e1);
+  const keepAssignee = !t.assignee_id || (S.members[targetId] || []).some(m => m.user_id === t.assignee_id);
+  const patch = { project_id: targetId, bucket_id: tb?.[0]?.id ?? null };
+  if (!keepAssignee) patch.assignee_id = null;
+  if (hasCustom) patch.custom = {};
+  const { error } = await sb.from('tasks').update(patch).eq('id', t.id);
+  if (error) { selectEl.value = t.project_id; return fail(error); }
+  S.openTaskId = null; modalRoot.innerHTML = '';
+  if (S.route.view === 'project') S.tasks = S.tasks.filter(x => x.id !== t.id);
+  else Object.assign(t, patch);
+  render();
+  toast(`המשימה הועברה ל"${target.name}"` + (keepAssignee ? '' : ' · האחראי הוסר כי אינו חבר בפרויקט'));
+}
+
 async function openTaskModal(id) {
   const t = S.tasks.find(t => t.id === id);
   if (!t) return;
@@ -638,7 +660,12 @@ async function openTaskModal(id) {
 
   const m = openModal(`
     <div class="modal-head">
-      ${project ? `<span class="chip proj"><span class="dot" style="background:${esc(project.color)}"></span>${esc(project.name)}</span>` : ''}
+      <label class="proj-pick" title="העברה לפרויקט אחר">
+        <span class="dot" style="background:${esc(project?.color || '#94a3b8')}"></span>
+        <select name="__project" aria-label="פרויקט">
+          ${S.projects.map(p => `<option value="${p.id}" ${p.id === t.project_id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+      </label>
       <span class="spacer" style="flex:1"></span>
       <button class="icon-btn" data-x title="סגירה">✕</button>
     </div>
@@ -698,6 +725,7 @@ async function openTaskModal(id) {
       sb.from('checklist_items').update({ done: item.done }).eq('id', item.id).then(({ error }) => error && fail(error));
       return;
     }
+    if (el.name === '__project') return moveTask(t, el.value, el);
     if (el.name && el.name !== 'text') saveField(el.name, el.value);
   });
   const descSave = debounce(v => saveField('description', v), 600);
