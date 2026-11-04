@@ -302,7 +302,7 @@ export function createTable(ctx) {
   async function addRow(title) {
     const pos = S.tasks.length ? Math.max(...S.tasks.map(t => t.position)) + 1000 : 1000;
     const { data, error } = await sb.from('tasks')
-      .insert({ project_id: S.route.id, title, bucket_id: S.buckets[0]?.id ?? null, position: pos })
+      .insert({ project_id: S.route.id, title, bucket_id: S.buckets[0]?.id ?? null, position: pos, assignee_id: S.me.id })
       .select('*, checklist_items(id, done)').single();
     if (error) return fail(error);
     data.custom ||= {};

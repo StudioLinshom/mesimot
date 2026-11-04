@@ -1,6 +1,6 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 import Sortable from 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/modular/sortable.esm.js';
-import { createTable } from './table.js?v=3';
+import { createTable } from './table.js?v=5';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ENABLE_GOOGLE_LOGIN } from '../config.js?v=3';
 
 /* =========================================================
@@ -480,8 +480,9 @@ async function addTask(col, title) {
   const project = S.route.id;
   const sameCol = S.tasks.filter(t => (t[col.field] ?? NONE) === col.key && t.status !== 'done');
   const minPos = sameCol.length ? Math.min(...sameCol.map(t => t.position)) : 2000;
-  const row = { project_id: project, title, position: minPos - 1000 };
+  const row = { project_id: project, title, position: minPos - 1000, assignee_id: S.me.id };  // creator is the default assignee
   if (col.key !== NONE) row[col.field] = col.key;
+  else if (col.field === 'assignee_id') row.assignee_id = null;  // added under "לא משויך"
   if (col.field !== 'bucket_id') row.bucket_id = S.buckets[0]?.id ?? null;
   const { data, error } = await sb.from('tasks').insert(row).select('*, checklist_items(id, done)').single();
   if (error) return fail(error);
